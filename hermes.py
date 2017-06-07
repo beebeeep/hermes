@@ -2,13 +2,14 @@
 
 import threading
 import copy
+import sys
 import logging
 import random
 import math
 import traceback
 import argparse
 
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s [%(levelname)-4.4s] %(name)s: %(message)s")
+logging.basicConfig(level=logging.ERROR, format="%(asctime)s [%(levelname)-4.4s] %(name)s: %(message)s")
 
 # goods from A to Z with price from 1 to 26
 PRICES = dict( (chr(x), x-64) for x in range(65, 91))
@@ -43,12 +44,13 @@ class Agent(object):
         if not possible_goods:
             return 0
         good = random.sample(possible_goods, 1)[0]
-        max_amount = min(self.goods[good], int(math.floor(max_cost/PRICES[good])))
+        max_amount = min(self.goods[good] - self._reserved_goods.get(good,0), int(math.floor(max_cost/PRICES[good])))
         amount = random.sample(range(1, max_amount+1), 1)[0]
         self._reserved_goods[good] += amount
 
         cost = PRICES[good]*amount
-        logging.debug("Agent %s puts sell order for %s of %s, total cost is %s", self.name, amount, good, cost)
+        logging.debug("Agent %s puts sell order for %s of %s, total cost is %s, reserved %s out of %s",
+                self.name, amount, good, cost, self._reserved_goods[good], self.goods[good])
         stock.sell(self, good, amount)
         self._today_sells += cost
         return cost
@@ -103,23 +105,26 @@ class Stock(object):
                 self.buys[good] = [order]
 
     def process_orders(self):
+        deals = 0
         for good, sell_orders in self.sells.items():
+            random.shuffle(sell_orders)     # just in case
             for sell_order in sell_orders:
-                if sell_order.filled:
-                    continue
-                if good in self.buys:
-                    for buy_order in self.buys[good]:
-                        if buy_order.filled:
-                            continue
-                        if buy_order.amount == sell_order.amount and buy_order.agent != sell_order.agent:
-                            try:
-                                self.do_deal(seller=sell_order.agent, buyer=buy_order.agent, good=good, amount=sell_order.amount)
-                            except Exception as e:
-                                logging.error("Cannot process order: %s, %s", e, traceback.format_exc(e))
-                            else:
-                                logging.info("transaction ok")
-                                sell_order.filled = True
-                                buy_order.filled = True
+                buy_orders = self.buys.get(good, [])
+                for buy_order in random.sample(buy_orders, len(buy_orders)):
+                    if sell_order.filled or buy_order.filled:
+                        continue
+                    if buy_order.amount == sell_order.amount and buy_order.agent != sell_order.agent:
+                        try:
+                            self.do_deal(seller=sell_order.agent, buyer=buy_order.agent, good=good, amount=sell_order.amount)
+                        except Exception as e:
+                            logging.error("Cannot process order: %s, %s", e, traceback.format_exc(e))
+                            sys.exit(-1)
+                        else:
+                            logging.info("transaction ok")
+                            deals += 1
+                            sell_order.filled = True
+                            buy_order.filled = True
+        return deals
 
     @staticmethod
     def do_deal(seller, buyer, good, amount):
@@ -162,11 +167,16 @@ if __name__ == '__main__':
             while True:
                 if agent.gen_sell_order(stock) == 0:
                     break
-        stock.process_orders()
+        transactions = buys = stock.process_orders()
 
         for agent in agents:
             agent.finish_day()
 
-        logging.info("Day finished")
+        sys.stdout.write("\rDay {} finished, {} transactions.                      ".format(day, transactions))
+        sys.stdout.flush()
+
+    print "\n===\n"
+    for agent in sorted(agents, key=lambda x: x.money):
+        print "Agent {}, money {}".format(agent.name, agent.money)
 
 
