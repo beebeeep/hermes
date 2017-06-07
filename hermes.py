@@ -142,22 +142,16 @@ class Stock(object):
                 buyer.goods[good] += amount
                 buyer.money -= cost
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='hermes')
-    parser.add_argument('-n', '--max-agents', type=int, default=1000)
-    parser.add_argument('-l', '--daily-limit', type=float, default=0.1)
-    parser.add_argument('-d', '--days', type=int, default=1)
-    args = parser.parse_args()
-
+def model(max_agents, daily_limit, days):
     # random set of goods for all agents
     starting_goods = dict( (chr(x), random.randint(0,10)) for x in range(65, 91))
     starting_money = 100
     agents = []
     logging.debug("Starting goods: %s", starting_goods)
-    for x in xrange(args.max_agents):
-        agents.append(Agent(str(x), starting_money, starting_goods, args.daily_limit))
+    for x in xrange(max_agents):
+        agents.append(Agent(str(x), starting_money, starting_goods, daily_limit))
 
-    for day in xrange(args.days):
+    for day in xrange(days):
         stock = Stock()
         logging.info("====== DAY %s ======", day)
         for agent in agents:
@@ -175,7 +169,16 @@ if __name__ == '__main__':
         sys.stdout.write("\rDay {} finished, {} transactions.                      ".format(day, transactions))
         sys.stdout.flush()
 
-    print "\n===\n"
+    return agents
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='hermes')
+    parser.add_argument('-n', '--max-agents', type=int, default=1000)
+    parser.add_argument('-l', '--daily-limit', type=float, default=0.1)
+    parser.add_argument('-d', '--days', type=int, default=1)
+    args = parser.parse_args()
+
+    agents = model(args.max_agents, args.daily_limit, args.days)
     for agent in sorted(agents, key=lambda x: x.money):
         print "Agent {}, money {}".format(agent.name, agent.money)
 
