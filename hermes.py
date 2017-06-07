@@ -21,26 +21,31 @@ class Agent(object):
         self.goods = copy.copy(goods)
         self.daily_limit = daily_limit
         self.lock = threading.Lock()
+        self._reserved_goods = dict( (g,0) for g in PRICES.keys())
         self._today_sells = 0
         self._today_buys = 0
 
     def _goods_cost(self):
         return sum(PRICES[good]*amount for good, amount in self.goods.items())
-    
+
     def finish_day(self):
+        """ drop all reserves and counters """
         self._today_buys = 0
         self._today_sells = 0
+        self._reserved_goods = dict( (g,0) for g in PRICES.keys())
 
     def gen_sell_order(self, stock):
         """ Generate sell order for random amount of random good we can sell today """
         max_cost = self.daily_limit*self._goods_cost() - self._today_sells
 
-        possible_goods = [good for good, amount in self.goods.items() if amount > 0 and PRICES[good] <= max_cost]
+        possible_goods = [good for good, amount in self.goods.items()
+                if amount - self._reserved_goods.get(good, 0) > 0 and PRICES[good] <= max_cost]
         if not possible_goods:
             return 0
         good = random.sample(possible_goods, 1)[0]
-        max_amount = int(math.floor(max_cost/PRICES[good]))
+        max_amount = min(self.goods[good], int(math.floor(max_cost/PRICES[good])))
         amount = random.sample(range(1, max_amount+1), 1)[0]
+        self._reserved_goods[good] += amount
 
         cost = PRICES[good]*amount
         logging.debug("Agent %s puts sell order for %s of %s, total cost is %s", self.name, amount, good, cost)
@@ -99,14 +104,18 @@ class Stock(object):
 
     def process_orders(self):
         for good, sell_orders in self.sells.items():
-            for sell_order in (x for x in sell_orders if not x.filled):
+            for sell_order in sell_orders:
+                if sell_order.filled:
+                    continue
                 if good in self.buys:
-                    for buy_order in (x for x in self.buys[good] if not x.filled):
+                    for buy_order in self.buys[good]:
+                        if buy_order.filled:
+                            continue
                         if buy_order.amount == sell_order.amount and buy_order.agent != sell_order.agent:
                             try:
                                 self.do_deal(seller=sell_order.agent, buyer=buy_order.agent, good=good, amount=sell_order.amount)
                             except Exception as e:
-                                logging.error("Cannot process order: %s, Traceback: %s", e, traceback.format_exc(e))
+                                logging.error("Cannot process order: %s, %s", e, traceback.format_exc(e))
                             else:
                                 logging.info("transaction ok")
                                 sell_order.filled = True
@@ -116,9 +125,9 @@ class Stock(object):
     def do_deal(seller, buyer, good, amount):
         cost = PRICES[good]*amount
         if seller.goods[good] < amount:
-            raise Exception("Seller doesn't have enough good")
+            raise Exception("Seller {} doesn't have enough good {} ({} requested, {} in stock)".format(seller.name, good, amount, seller.goods[good]))
         if buyer.money < cost:
-            raise Exception("Buyer doesn't have enough money")
+            raise Exception("Buyer {} doesn't have enough money ({} needed, {} available)".format(buyer.name, cost, buyer.money))
 
         logging.info("Agent %s buys %s of %s from %s, cost is %s", buyer.name, amount, good, seller.name, cost)
         with seller.lock:
@@ -139,6 +148,7 @@ if __name__ == '__main__':
     starting_goods = dict( (chr(x), random.randint(0,10)) for x in range(65, 91))
     starting_money = 100
     agents = []
+    logging.debug("Starting goods: %s", starting_goods)
     for x in xrange(args.max_agents):
         agents.append(Agent(str(x), starting_money, starting_goods, args.daily_limit))
 
